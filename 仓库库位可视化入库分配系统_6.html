@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>库位可视化管理 · 入库分配系统</title>
+<style>
+  :root{
+    --bg:#10131a;
+    --panel:#171b24;
+    --panel2:#1d2330;
+    --border:#2a3142;
+    --text:#e7ebf2;
+    --muted:#8a93a8;
+    --muted2:#5c6478;
+    --free:#2ec46f;
+    --free-dim:#173321;
+    --occ:#e5484d;
+    --occ-dim:#3a1e21;
+    --reserve:#e8a33d;
+    --reserve-dim:#3a2e17;
+    --aisle:#3d6fa3;
+    --func:#6b5b9a;
+    --hazard:#f2b705;
+    --accent:#3d8bfd;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);}
+  body{min-height:100vh;}
+
+  .hazard-strip{
+    height:6px;
+    background:repeating-linear-gradient(135deg, var(--hazard) 0 14px, #1a1a1a 14px 28px);
+    opacity:0.9;
+  }
+
+  .topbar{
+    padding:18px 24px 14px;
+    display:flex; align-items:baseline; justify-content:space-between;
+    border-bottom:1px solid var(--border);
+    flex-wrap:wrap; gap:12px;
+  }
+  .topbar h1{
+    font-size:20px; margin:0; font-weight:800; letter-spacing:0.5px;
+  }
+  .topbar h1 span{color:var(--muted); font-weight:500; font-size:13px; margin-left:10px; letter-spacing:0.2px;}
+  .stats{display:flex; gap:22px;}
+  .stat{text-align:right;}
+  .stat .num{font-family:var(--mono); font-size:20px; font-weight:700;}
+  .stat .lbl{font-size:11px; color:var(--muted); letter-spacing:0.5px;}
+  .stat.free .num{color:var(--free);}
+  .stat.occ .num{color:var(--occ);}
+  .stat.reserve .num{color:var(--reserve);}
+
+  .layout{
+    display:grid;
+    grid-template-columns: minmax(0,1fr) 380px;
+    gap:0;
+    align-items:start;
+  }
+  @media (max-width: 980px){
+    .layout{grid-template-columns: 1fr;}
+  }
+
+  .mapPane{
+    padding:20px 24px;
+    overflow-x:auto;
+  }
+  .mapPane h2, .side h2{
+    font-size:12px; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted);
+    margin:0 0 12px 0; font-weight:700;
+  }
+  .legend{display:flex; gap:16px; margin-bottom:14px; flex-wrap:wrap;}
+  .legend .item{display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--muted);}
+  .legend .swatch{width:11px; height:11px; border-radius:2px; display:inline-block;}
+
+  .grid{
+    display:grid;
+    grid-template-columns: repeat(56, 15px);
+    grid-auto-rows: 20px;
+    gap:1px;
+    position:relative;
+    background:#0b0d12;
+    padding:6px;
+    border-radius:6px;
+    border:1px solid var(--border);
+    width:max-content;
+  }
+  .cell{
+    border-radius:2px;
+    font-size:8px;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden; white-space:nowrap;
+    cursor:default;
+    color:var(--muted);
+  }
+  .cell.label{
+    color:var(--text);
+    font-weight:700;
+    background:transparent;
+    font-size:9px;
+  }
+  .cell.bigletter{
+    font-size:15px; font-weight:800; color:var(--muted2);
+  }
+  .cell.func{
+    color:#fff; font-weight:600; font-size:8px; line-height:1.1; text-align:center; white-space:normal;
+    padding:2px;
+  }
+  .cell.aisle-strip{ background:var(--aisle); opacity:0.55; }
+  .cell.loc{
+    cursor:pointer;
+    color:rgba(0,0,0,0.55);
+    font-family:var(--mono);
+    font-weight:700;
+    font-size:5.5px;
+    transition:transform .12s ease;
+    writing-mode: vertical-rl;
+  }
+  .cell.loc.free{ background:var(--free); }
+  .cell.loc.occupied{ background:var(--occ); color:rgba(255,255,255,0.85); }
+  .cell.loc.reserved{ background:var(--reserve); color:rgba(0,0,0,0.6); box-shadow:inset 0 0 0 1px rgba(0,0,0,0.35); }
+  .cell.loc:hover{ transform:scale(1.35); z-index:5; box-shadow:0 0 0 1px #fff8; }
+  .cell.loc.flash{ animation:flashcell 1.1s ease 2; }
+  @keyframes flashcell{
+    0%,100%{ box-shadow:0 0 0 0 rgba(242,183,5,0); }
+    50%{ box-shadow:0 0 0 4px rgba(242,183,5,0.9); }
+  }
+
+  .side{
+    background:var(--panel);
+    border-left:1px solid var(--border);
+    padding:20px;
+    min-height:100%;
+  }
+  .card{
+    background:var(--panel2);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:14px 16px;
+    margin-bottom:16px;
+  }
+  .field{margin-bottom:10px;}
+  .field label{display:block; font-size:11.5px; color:var(--muted); margin-bottom:4px;}
+  .field input, .field select{
+    width:100%; background:#12161f; border:1px solid var(--border); color:var(--text);
+    border-radius:5px; padding:8px 9px; font-size:13px; font-family:var(--sans);
+  }
+  .field input:focus, .field select:focus{ outline:none; border-color:var(--accent); }
+  .btn{
+    width:100%; padding:10px; border-radius:6px; border:none; cursor:pointer;
+    font-weight:700; font-size:13.5px; letter-spacing:0.3px;
+    background:var(--hazard); color:#1a1400;
+    transition:filter .12s;
+  }
+  .btn:hover{ filter:brightness(1.08); }
+  .btn.secondary{
+    background:transparent; border:1px solid var(--border); color:var(--muted); font-weight:600;
+  }
+  .btn.secondary:hover{ color:var(--text); border-color:var(--muted2); }
+  .btn.reserve-btn{ background:var(--reserve); color:#241a05; }
+
+  .toast{
+    margin-top:10px; font-size:12.5px; padding:9px 10px; border-radius:5px;
+    display:none;
+  }
+  .toast.ok{ display:block; background:var(--free-dim); color:var(--free); border:1px solid #1f5c3a; }
+  .toast.err{ display:block; background:var(--occ-dim); color:#ff8b8f; border:1px solid #5c2327; }
+
+  .log{ max-height:230px; overflow-y:auto; }
+  .log table{ width:100%; border-collapse:collapse; font-size:12px; }
+  .log th{ text-align:left; color:var(--muted); font-weight:600; font-size:10.5px; padding:4px 4px; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--panel2);}
+  .log td{ padding:5px 4px; border-bottom:1px solid #232a38; }
+  .log td.code{ font-family:var(--mono); color:var(--hazard); font-weight:700; }
+  .log .undo{ cursor:pointer; color:var(--muted); font-size:11px; text-decoration:underline; }
+  .log .undo:hover{ color:var(--occ); }
+  .log-empty{ color:var(--muted2); font-size:12px; padding:8px 0; }
+
+  .zoneBars{ max-height:260px; overflow-y:auto; }
+  .zbar-row{ display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:11px; }
+  .zbar-row .zname{ width:34px; color:var(--muted); font-family:var(--mono); }
+  .zbar-track{ flex:1; height:7px; background:#0e1118; border-radius:4px; overflow:hidden; }
+  .zbar-fill{ height:100%; background:linear-gradient(90deg, var(--free), var(--hazard)); }
+  .zbar-row .zcount{ width:46px; text-align:right; color:var(--muted); font-family:var(--mono); font-size:10.5px;}
+
+  .cellPopover{
+    position:fixed; z-index:50; background:#20263380; backdrop-filter:blur(6px);
+    background:#20263a; border:1px solid var(--border); border-radius:8px;
+    padding:12px 14px; font-size:12.5px; box-shadow:0 8px 24px rgba(0,0,0,0.5);
+    display:none; min-width:180px;
+  }
+  .cellPopover .code{ font-family:var(--mono); font-weight:800; font-size:15px; margin-bottom:6px; }
+  .cellPopover .row{ display:flex; justify-content:space-between; margin-bottom:8px; color:var(--muted); }
+  .cellPopover button{ width:100%; padding:7px; border-radius:5px; border:none; cursor:pointer; font-weight:700; font-size:12px; }
+
+  ::-webkit-scrollbar{ height:8px; width:8px; }
+  ::-webkit-scrollbar-thumb{ background:#2c3446; border-radius:4px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+
+  .authOverlay{
+    position:fixed; inset:0; z-index:100;
+    background:radial-gradient(circle at 30% 20%, #1b2130 0%, #0b0d12 70%);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .authBox{
+    width:340px; background:var(--panel2); border:1px solid var(--border); border-radius:10px;
+    padding:26px 26px 22px; box-shadow:0 20px 60px rgba(0,0,0,0.5);
+  }
+  .authBox h2{ margin:0 0 4px; font-size:18px; font-weight:800; letter-spacing:0.3px; }
+  .authBox .sub{ color:var(--muted); font-size:12px; margin-bottom:18px; }
+  .authBox .field{ margin-bottom:12px; }
+  .authBox .authBtn{
+    width:100%; padding:10px; border-radius:6px; border:none; cursor:pointer; font-weight:700;
+    background:var(--hazard); color:#1a1400; font-size:13.5px; margin-top:4px;
+  }
+  .authSwitch{ text-align:center; margin-top:14px; font-size:12px; color:var(--muted); }
+  .authSwitch a{ color:var(--accent); cursor:pointer; text-decoration:underline; }
+  .authErr{ color:#ff8b8f; font-size:12px; margin-top:8px; min-height:14px; }
+  .authNote{ font-size:10.5px; color:var(--muted2); margin-top:14px; line-height:1.5; border-top:1px solid var(--border); padding-top:10px; }
+
+  .userTag{ display:flex; align-items:center; gap:10px; font-size:12px; color:var(--muted); }
+  .userTag b{ color:var(--text); }
+  .userTag button{
+    background:transparent; border:1px solid var(--border); color:var(--muted);
+    border-radius:5px; padding:4px 9px; cursor:pointer; font-size:11.5px;
+  }
+  .userTag button:hover{ color:var(--text); border-color:var(--muted2); }
+</style>
+</head>
+<body>
+
+<div class="authOverlay" id="authOverlay">
+  <div class="authBox">
+    <h2 id="authTitle">邮箱登录</h2>
+    <div class="sub" id="authSub">输入邮箱即可登录，无需密码，操作记录会关联到你的邮箱</div>
+    <div class="field">
+      <label>邮箱</label>
+      <input id="authEmail" type="email" placeholder="例如：zhangwei@company.com">
+    </div>
+    <button class="authBtn" id="authSubmit">登录</button>
+    <div class="authErr" id="authErr"></div>
+    <div class="authNote">本工具用邮箱作为身份标识，方便追溯"谁改了什么"，不做邮箱真实性验证——请勿用于需要严格身份核验的场景。数据保存在共享存储中，所有登录本系统的人都可见。</div>
+  </div>
+</div>
+
+<div class="hazard-strip"></div>
+<div class="topbar">
+  <h1>库位可视化管理<span>入库分配系统 · 布局图实时映射</span></h1>
+  <div style="display:flex; align-items:center; gap:22px; flex-wrap:wrap;">
+    <div class="userTag" id="userTag" style="display:none;">
+      当前登录 <b id="curUserName"></b>
+      <button id="btnLogout">退出登录</button>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="num" id="statTotal">--</div><div class="lbl">总库位</div></div>
+      <div class="stat free"><div class="num" id="statFree">--</div><div class="lbl">空闲</div></div>
+      <div class="stat reserve"><div class="num" id="statReserve">--</div><div class="lbl">预占用</div></div>
+      <div class="stat occ"><div class="num" id="statOcc">--</div><div class="lbl">占用</div></div>
+      <div class="stat"><div class="num" id="statRate">--</div><div class="lbl">占用率</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="layout" id="mainLayout" style="display:none;">
+  <div class="mapPane">
+    <h2>仓库布局图</h2>
+    <div class="legend">
+      <div class="item"><span class="swatch" style="background:var(--free)"></span>空闲库位</div>
+      <div class="item"><span class="swatch" style="background:var(--occ)"></span>占用库位</div>
+      <div class="item"><span class="swatch" style="background:var(--reserve)"></span>预占用库位</div>
+      <div class="item"><span class="swatch" style="background:var(--aisle);opacity:.55"></span>货架分隔</div>
+      <div class="item"><span class="swatch" style="background:var(--func)"></span>功能区域</div>
+    </div>
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h2>新增入库</h2>
+      <div class="field">
+        <label>入库单号</label>
+        <input id="fOrder" type="text" placeholder="自动生成，可修改">
+      </div>
+      <div class="field">
+        <label>货物名称 / SKU</label>
+        <input id="fGoods" type="text" placeholder="例如：电视机A / SKU-1024">
+      </div>
+      <div class="field">
+        <label>数量（= 占用库位数）</label>
+        <input id="fQty" type="number" min="1" value="1">
+      </div>
+      <div class="field">
+        <label>指定区域（可留空 = 自动全库分配）</label>
+        <select id="fZone"><option value="">不限区域，自动分配</option></select>
+      </div>
+      <button class="btn" id="btnAllocate">分配库位</button>
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <div class="card">
+      <h2>预占用库位</h2>
+      <div class="field">
+        <label>预占原因 / 备注</label>
+        <input id="rNote" type="text" placeholder="例如：预留给大客户 / 货架维修">
+      </div>
+      <div class="field">
+        <label>预占数量</label>
+        <input id="rQty" type="number" min="1" value="1">
+      </div>
+      <div class="field">
+        <label>指定区域（可留空 = 自动全库选取）</label>
+        <select id="rZone"><option value="">不限区域，自动选取</option></select>
+      </div>
+      <button class="btn reserve-btn" id="btnReserve">设为预占用</button>
+      <div class="toast" id="reserveToast"></div>
+    </div>
+
+    <div class="card">
+      <h2>分配记录</h2>
+      <div class="log" id="logWrap">
+        <div class="log-empty">暂无入库记录</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>各区域占用情况</h2>
+      <div class="zoneBars" id="zoneBars"></div>
+    </div>
+
+    <button class="btn secondary" id="btnReset">重置全部占用状态</button>
+  </div>
+</div>
+
+<div class="cellPopover" id="popover">
+  <div class="code" id="popCode"></div>
+  <div class="row"><span>区域</span><span id="popZone"></span></div>
+  <div class="row"><span>状态</span><span id="popStatus"></span></div>
+  <div id="popActions" style="display:flex; flex-direction:column; gap:6px;"></div>
+</div>
+
+<script id="wdata-json" type="application/json">
+{"locations": [{"code": "A4-01", "zone": "A4", "row": 24, "col": 27}, {"code": "A4-02", "zone": "A4", "row": 25, "col": 27}, {"code": "A4-03", "zone": "A4", "row": 26, "col": 27}, {"code": "A4-04", "zone": "A4", "row": 27, "col": 27}, {"code": "A4-05", "zone": "A4", "row": 28, "col": 27}, {"code": "A4-06", "zone": "A4", "row": 29, "col": 27}, {"code": "A4-07", "zone": "A4", "row": 24, "col": 29}, {"code": "A4-08", "zone": "A4", "row": 25, "col": 29}, {"code": "A4-09", "zone": "A4", "row": 26, "col": 29}, {"code": "A4-10", "zone": "A4", "row": 27, "col": 29}, {"code": "A4-11", "zone": "A4", "row": 28, "col": 29}, {"code": "A4-12", "zone": "A4", "row": 29, "col": 29}, {"code": "A4-13", "zone": "A4", "row": 24, "col": 30}, {"code": "A4-14", "zone": "A4", "row": 25, "col": 30}, {"code": "A4-15", "zone": "A4", "row": 26, "col": 30}, {"code": "A4-16", "zone": "A4", "row": 27, "col": 30}, {"code": "A4-17", "zone": "A4", "row": 28, "col": 30}, {"code": "A4-18", "zone": "A4", "row": 29, "col": 30}, {"code": "A4-19", "zone": "A4", "row": 24, "col": 32}, {"code": "A4-20", "zone": "A4", "row": 25, "col": 32}, {"code": "A4-21", "zone": "A4", "row": 26, "col": 32}, {"code": "A4-22", "zone": "A4", "row": 27, "col": 32}, {"code": "A4-23", "zone": "A4", "row": 28, "col": 32}, {"code": "A4-24", "zone": "A4", "row": 29, "col": 32}, {"code": "A5-01", "zone": "A5", "row": 24, "col": 33}, {"code": "A5-02", "zone": "A5", "row": 25, "col": 33}, {"code": "A5-03", "zone": "A5", "row": 26, "col": 33}, {"code": "A5-04", "zone": "A5", "row": 27, "col": 33}, {"code": "A5-05", "zone": "A5", "row": 28, "col": 33}, {"code": "A5-06", "zone": "A5", "row": 29, "col": 33}, {"code": "A5-07", "zone": "A5", "row": 24, "col": 35}, {"code": "A5-08", "zone": "A5", "row": 25, "col": 35}, {"code": "A5-09", "zone": "A5", "row": 26, "col": 35}, {"code": "A5-10", "zone": "A5", "row": 27, "col": 35}, {"code": "A5-11", "zone": "A5", "row": 28, "col": 35}, {"code": "A5-12", "zone": "A5", "row": 29, "col": 35}, {"code": "A5-13", "zone": "A5", "row": 24, "col": 36}, {"code": "A5-14", "zone": "A5", "row": 25, "col": 36}, {"code": "A5-15", "zone": "A5", "row": 26, "col": 36}, {"code": "A5-16", "zone": "A5", "row": 27, "col": 36}, {"code": "A5-17", "zone": "A5", "row": 28, "col": 36}, {"code": "A5-18", "zone": "A5", "row": 29, "col": 36}, {"code": "A5-19", "zone": "A5", "row": 24, "col": 38}, {"code": "A5-20", "zone": "A5", "row": 25, "col": 38}, {"code": "A5-21", "zone": "A5", "row": 26, "col": 38}, {"code": "A5-22", "zone": "A5", "row": 27, "col": 38}, {"code": "A5-23", "zone": "A5", "row": 28, "col": 38}, {"code": "A5-24", "zone": "A5", "row": 29, "col": 38}, {"code": "A6-01", "zone": "A6", "row": 24, "col": 39}, {"code": "A6-02", "zone": "A6", "row": 25, "col": 39}, {"code": "A6-03", "zone": "A6", "row": 26, "col": 39}, {"code": "A6-04", "zone": "A6", "row": 27, "col": 39}, {"code": "A6-05", "zone": "A6", "row": 28, "col": 39}, {"code": "A6-06", "zone": "A6", "row": 29, "col": 39}, {"code": "A6-07", "zone": "A6", "row": 24, "col": 41}, {"code": "A6-08", "zone": "A6", "row": 25, "col": 41}, {"code": "A6-09", "zone": "A6", "row": 26, "col": 41}, {"code": "A6-10", "zone": "A6", "row": 27, "col": 41}, {"code": "A6-11", "zone": "A6", "row": 28, "col": 41}, {"code": "A6-12", "zone": "A6", "row": 29, "col": 41}, {"code": "A6-13", "zone": "A6", "row": 24, "col": 42}, {"code": "A6-14", "zone": "A6", "row": 25, "col": 42}, {"code": "A6-15", "zone": "A6", "row": 26, "col": 42}, {"code": "A6-16", "zone": "A6", "row": 27, "col": 42}, {"code": "A6-17", "zone": "A6", "row": 28, "col": 42}, {"code": "A6-18", "zone": "A6", "row": 29, "col": 42}, {"code": "A6-19", "zone": "A6", "row": 24, "col": 44}, {"code": "A6-20", "zone": "A6", "row": 25, "col": 44}, {"code": "A6-21", "zone": "A6", "row": 26, "col": 44}, {"code": "A6-22", "zone": "A6", "row": 27, "col": 44}, {"code": "A6-23", "zone": "A6", "row": 28, "col": 44}, {"code": "A6-24", "zone": "A6", "row": 29, "col": 44}, {"code": "A7-01", "zone": "A7", "row": 24, "col": 45}, {"code": "A7-02", "zone": "A7", "row": 25, "col": 45}, {"code": "A7-03", "zone": "A7", "row": 26, "col": 45}, {"code": "A7-04", "zone": "A7", "row": 27, "col": 45}, {"code": "A7-05", "zone": "A7", "row": 28, "col": 45}, {"code": "A7-06", "zone": "A7", "row": 29, "col": 45}, {"code": "A7-07", "zone": "A7", "row": 24, "col": 47}, {"code": "A7-08", "zone": "A7", "row": 25, "col": 47}, {"code": "A7-09", "zone": "A7", "row": 26, "col": 47}, {"code": "A7-10", "zone": "A7", "row": 27, "col": 47}, {"code": "A7-11", "zone": "A7", "row": 28, "col": 47}, {"code": "A7-12", "zone": "A7", "row": 29, "col": 47}, {"code": "A7-13", "zone": "A7", "row": 24, "col": 48}, {"code": "A7-14", "zone": "A7", "row": 25, "col": 48}, {"code": "A7-15", "zone": "A7", "row": 26, "col": 48}, {"code": "A7-16", "zone": "A7", "row": 27, "col": 48}, {"code": "A7-17", "zone": "A7", "row": 28, "col": 48}, {"code": "A7-18", "zone": "A7", "row": 29, "col": 48}, {"code": "A7-19", "zone": "A7", "row": 24, "col": 50}, {"code": "A7-20", "zone": "A7", "row": 25, "col": 50}, {"code": "A7-21", "zone": "A7", "row": 26, "col": 50}, {"code": "A7-22", "zone": "A7", "row": 27, "col": 50}, {"code": "A7-23", "zone": "A7", "row": 28, "col": 50}, {"code": "A7-24", "zone": "A7", "row": 29, "col": 50}, {"code": "B1-01", "zone": "B1", "row": 17, "col": 15}, {"code": "B1-02", "zone": "B1", "row": 18, "col": 15}, {"code": "B1-03", "zone": "B1", "row": 19, "col": 15}, {"code": "B1-04", "zone": "B1", "row": 20, "col": 15}, {"code": "B1-05", "zone": "B1", "row": 21, "col": 15}, {"code": "B1-06", "zone": "B1", "row": 17, "col": 17}, {"code": "B1-07", "zone": "B1", "row": 18, "col": 17}, {"code": "B1-08", "zone": "B1", "row": 19, "col": 17}, {"code": "B1-09", "zone": "B1", "row": 20, "col": 17}, {"code": "B1-10", "zone": "B1", "row": 21, "col": 17}, {"code": "B1-11", "zone": "B1", "row": 17, "col": 18}, {"code": "B1-12", "zone": "B1", "row": 18, "col": 18}, {"code": "B1-13", "zone": "B1", "row": 19, "col": 18}, {"code": "B1-14", "zone": "B1", "row": 20, "col": 18}, {"code": "B1-15", "zone": "B1", "row": 21, "col": 18}, {"code": "B1-16", "zone": "B1", "row": 17, "col": 20}, {"code": "B1-17", "zone": "B1", "row": 18, "col": 20}, {"code": "B1-18", "zone": "B1", "row": 19, "col": 20}, {"code": "B1-19", "zone": "B1", "row": 20, "col": 20}, {"code": "B1-20", "zone": "B1", "row": 21, "col": 20}, {"code": "B2-01", "zone": "B2", "row": 17, "col": 21}, {"code": "B2-02", "zone": "B2", "row": 18, "col": 21}, {"code": "B2-03", "zone": "B2", "row": 19, "col": 21}, {"code": "B2-04", "zone": "B2", "row": 20, "col": 21}, {"code": "B2-05", "zone": "B2", "row": 21, "col": 21}, {"code": "B2-06", "zone": "B2", "row": 17, "col": 23}, {"code": "B2-07", "zone": "B2", "row": 18, "col": 23}, {"code": "B2-08", "zone": "B2", "row": 19, "col": 23}, {"code": "B2-09", "zone": "B2", "row": 20, "col": 23}, {"code": "B2-10", "zone": "B2", "row": 21, "col": 23}, {"code": "B2-11", "zone": "B2", "row": 17, "col": 24}, {"code": "B2-12", "zone": "B2", "row": 18, "col": 24}, {"code": "B2-13", "zone": "B2", "row": 19, "col": 24}, {"code": "B2-14", "zone": "B2", "row": 20, "col": 24}, {"code": "B2-15", "zone": "B2", "row": 21, "col": 24}, {"code": "B2-16", "zone": "B2", "row": 17, "col": 26}, {"code": "B2-17", "zone": "B2", "row": 18, "col": 26}, {"code": "B2-18", "zone": "B2", "row": 19, "col": 26}, {"code": "B2-19", "zone": "B2", "row": 20, "col": 26}, {"code": "B2-20", "zone": "B2", "row": 21, "col": 26}, {"code": "B3-01", "zone": "B3", "row": 17, "col": 27}, {"code": "B3-02", "zone": "B3", "row": 18, "col": 27}, {"code": "B3-03", "zone": "B3", "row": 19, "col": 27}, {"code": "B3-04", "zone": "B3", "row": 20, "col": 27}, {"code": "B3-05", "zone": "B3", "row": 21, "col": 27}, {"code": "B3-06", "zone": "B3", "row": 17, "col": 29}, {"code": "B3-07", "zone": "B3", "row": 18, "col": 29}, {"code": "B3-08", "zone": "B3", "row": 19, "col": 29}, {"code": "B3-09", "zone": "B3", "row": 20, "col": 29}, {"code": "B3-10", "zone": "B3", "row": 21, "col": 29}, {"code": "B3-11", "zone": "B3", "row": 17, "col": 30}, {"code": "B3-12", "zone": "B3", "row": 18, "col": 30}, {"code": "B3-13", "zone": "B3", "row": 19, "col": 30}, {"code": "B3-14", "zone": "B3", "row": 20, "col": 30}, {"code": "B3-15", "zone": "B3", "row": 21, "col": 30}, {"code": "B3-16", "zone": "B3", "row": 17, "col": 32}, {"code": "B3-17", "zone": "B3", "row": 18, "col": 32}, {"code": "B3-18", "zone": "B3", "row": 19, "col": 32}, {"code": "B3-19", "zone": "B3", "row": 20, "col": 32}, {"code": "B3-20", "zone": "B3", "row": 21, "col": 32}, {"code": "B4-01", "zone": "B4", "row": 17, "col": 33}, {"code": "B4-02", "zone": "B4", "row": 18, "col": 33}, {"code": "B4-03", "zone": "B4", "row": 19, "col": 33}, {"code": "B4-04", "zone": "B4", "row": 20, "col": 33}, {"code": "B4-05", "zone": "B4", "row": 21, "col": 33}, {"code": "B4-06", "zone": "B4", "row": 17, "col": 35}, {"code": "B4-07", "zone": "B4", "row": 18, "col": 35}, {"code": "B4-08", "zone": "B4", "row": 19, "col": 35}, {"code": "B4-09", "zone": "B4", "row": 20, "col": 35}, {"code": "B4-10", "zone": "B4", "row": 21, "col": 35}, {"code": "B4-11", "zone": "B4", "row": 17, "col": 36}, {"code": "B4-12", "zone": "B4", "row": 18, "col": 36}, {"code": "B4-13", "zone": "B4", "row": 19, "col": 36}, {"code": "B4-14", "zone": "B4", "row": 20, "col": 36}, {"code": "B4-15", "zone": "B4", "row": 21, "col": 36}, {"code": "B4-16", "zone": "B4", "row": 17, "col": 38}, {"code": "B4-17", "zone": "B4", "row": 18, "col": 38}, {"code": "B4-18", "zone": "B4", "row": 19, "col": 38}, {"code": "B4-19", "zone": "B4", "row": 20, "col": 38}, {"code": "B4-20", "zone": "B4", "row": 21, "col": 38}, {"code": "B5-01", "zone": "B5", "row": 17, "col": 39}, {"code": "B5-02", "zone": "B5", "row": 18, "col": 39}, {"code": "B5-03", "zone": "B5", "row": 19, "col": 39}, {"code": "B5-04", "zone": "B5", "row": 20, "col": 39}, {"code": "B5-05", "zone": "B5", "row": 21, "col": 39}, {"code": "B5-06", "zone": "B5", "row": 17, "col": 41}, {"code": "B5-07", "zone": "B5", "row": 18, "col": 41}, {"code": "B5-08", "zone": "B5", "row": 19, "col": 41}, {"code": "B5-09", "zone": "B5", "row": 20, "col": 41}, {"code": "B5-10", "zone": "B5", "row": 21, "col": 41}, {"code": "B5-11", "zone": "B5", "row": 17, "col": 42}, {"code": "B5-12", "zone": "B5", "row": 18, "col": 42}, {"code": "B5-13", "zone": "B5", "row": 19, "col": 42}, {"code": "B5-14", "zone": "B5", "row": 20, "col": 42}, {"code": "B5-15", "zone": "B5", "row": 21, "col": 42}, {"code": "B5-16", "zone": "B5", "row": 17, "col": 44}, {"code": "B5-17", "zone": "B5", "row": 18, "col": 44}, {"code": "B5-18", "zone": "B5", "row": 19, "col": 44}, {"code": "B5-19", "zone": "B5", "row": 20, "col": 44}, {"code": "B5-20", "zone": "B5", "row": 21, "col": 44}, {"code": "B6-01", "zone": "B6", "row": 17, "col": 45}, {"code": "B6-02", "zone": "B6", "row": 18, "col": 45}, {"code": "B6-03", "zone": "B6", "row": 19, "col": 45}, {"code": "B6-04", "zone": "B6", "row": 20, "col": 45}, {"code": "B6-05", "zone": "B6", "row": 21, "col": 45}, {"code": "B6-06", "zone": "B6", "row": 17, "col": 47}, {"code": "B6-07", "zone": "B6", "row": 18, "col": 47}, {"code": "B6-08", "zone": "B6", "row": 19, "col": 47}, {"code": "B6-09", "zone": "B6", "row": 20, "col": 47}, {"code": "B6-10", "zone": "B6", "row": 21, "col": 47}, {"code": "B6-11", "zone": "B6", "row": 17, "col": 48}, {"code": "B6-12", "zone": "B6", "row": 18, "col": 48}, {"code": "B6-13", "zone": "B6", "row": 19, "col": 48}, {"code": "B6-14", "zone": "B6", "row": 20, "col": 48}, {"code": "B6-15", "zone": "B6", "row": 21, "col": 48}, {"code": "B6-16", "zone": "B6", "row": 17, "col": 50}, {"code": "B6-17", "zone": "B6", "row": 18, "col": 50}, {"code": "B6-18", "zone": "B6", "row": 19, "col": 50}, {"code": "B6-19", "zone": "B6", "row": 20, "col": 50}, {"code": "B6-20", "zone": "B6", "row": 21, "col": 50}, {"code": "B7-01", "zone": "B7", "row": 17, "col": 51}, {"code": "B7-02", "zone": "B7", "row": 18, "col": 51}, {"code": "B7-03", "zone": "B7", "row": 19, "col": 51}, {"code": "B7-04", "zone": "B7", "row": 17, "col": 53}, {"code": "B7-05", "zone": "B7", "row": 18, "col": 53}, {"code": "B7-06", "zone": "B7", "row": 19, "col": 53}, {"code": "B7-07", "zone": "B7", "row": 17, "col": 54}, {"code": "B7-08", "zone": "B7", "row": 18, "col": 54}, {"code": "B7-09", "zone": "B7", "row": 19, "col": 54}, {"code": "C0-01", "zone": "C0", "row": 14, "col": 2}, {"code": "C0-02", "zone": "C0", "row": 15, "col": 2}, {"code": "C0-03", "zone": "C0", "row": 14, "col": 4}, {"code": "C0-04", "zone": "C0", "row": 15, "col": 4}, {"code": "C0-05", "zone": "C0", "row": 14, "col": 5}, {"code": "C0-06", "zone": "C0", "row": 15, "col": 5}, {"code": "C0-07", "zone": "C0", "row": 14, "col": 7}, {"code": "C0-08", "zone": "C0", "row": 15, "col": 7}, {"code": "C0-09", "zone": "C0", "row": 14, "col": 8}, {"code": "C0-10", "zone": "C0", "row": 15, "col": 8}, {"code": "C1-01", "zone": "C1", "row": 13, "col": 10}, {"code": "C1-02", "zone": "C1", "row": 14, "col": 10}, {"code": "C1-03", "zone": "C1", "row": 15, "col": 10}, {"code": "C1-04", "zone": "C1", "row": 13, "col": 12}, {"code": "C1-05", "zone": "C1", "row": 14, "col": 12}, {"code": "C1-06", "zone": "C1", "row": 15, "col": 12}, {"code": "C1-07", "zone": "C1", "row": 13, "col": 14}, {"code": "C1-08", "zone": "C1", "row": 14, "col": 14}, {"code": "C1-09", "zone": "C1", "row": 15, "col": 14}, {"code": "C2-01", "zone": "C2", "row": 13, "col": 15}, {"code": "C2-02", "zone": "C2", "row": 14, "col": 15}, {"code": "C2-03", "zone": "C2", "row": 15, "col": 15}, {"code": "C2-04", "zone": "C2", "row": 13, "col": 17}, {"code": "C2-05", "zone": "C2", "row": 14, "col": 17}, {"code": "C2-06", "zone": "C2", "row": 15, "col": 17}, {"code": "C2-07", "zone": "C2", "row": 13, "col": 18}, {"code": "C2-08", "zone": "C2", "row": 14, "col": 18}, {"code": "C2-09", "zone": "C2", "row": 15, "col": 18}, {"code": "C2-10", "zone": "C2", "row": 13, "col": 20}, {"code": "C2-11", "zone": "C2", "row": 14, "col": 20}, {"code": "C2-12", "zone": "C2", "row": 15, "col": 20}, {"code": "C3-01", "zone": "C3", "row": 13, "col": 21}, {"code": "C3-02", "zone": "C3", "row": 14, "col": 21}, {"code": "C3-03", "zone": "C3", "row": 15, "col": 21}, {"code": "C3-04", "zone": "C3", "row": 13, "col": 23}, {"code": "C3-05", "zone": "C3", "row": 14, "col": 23}, {"code": "C3-06", "zone": "C3", "row": 15, "col": 23}, {"code": "C3-07", "zone": "C3", "row": 13, "col": 24}, {"code": "C3-08", "zone": "C3", "row": 14, "col": 24}, {"code": "C3-09", "zone": "C3", "row": 15, "col": 24}, {"code": "C3-10", "zone": "C3", "row": 13, "col": 26}, {"code": "C3-11", "zone": "C3", "row": 14, "col": 26}, {"code": "C3-12", "zone": "C3", "row": 15, "col": 26}, {"code": "C4-01", "zone": "C4", "row": 13, "col": 27}, {"code": "C4-02", "zone": "C4", "row": 14, "col": 27}, {"code": "C4-03", "zone": "C4", "row": 15, "col": 27}, {"code": "C4-04", "zone": "C4", "row": 13, "col": 29}, {"code": "C4-05", "zone": "C4", "row": 14, "col": 29}, {"code": "C4-06", "zone": "C4", "row": 15, "col": 29}, {"code": "C4-07", "zone": "C4", "row": 13, "col": 30}, {"code": "C4-08", "zone": "C4", "row": 14, "col": 30}, {"code": "C4-09", "zone": "C4", "row": 15, "col": 30}, {"code": "C4-10", "zone": "C4", "row": 13, "col": 32}, {"code": "C4-11", "zone": "C4", "row": 14, "col": 32}, {"code": "C4-12", "zone": "C4", "row": 15, "col": 32}, {"code": "C5-01", "zone": "C5", "row": 13, "col": 33}, {"code": "C5-02", "zone": "C5", "row": 14, "col": 33}, {"code": "C5-03", "zone": "C5", "row": 15, "col": 33}, {"code": "C5-04", "zone": "C5", "row": 13, "col": 35}, {"code": "C5-05", "zone": "C5", "row": 14, "col": 35}, {"code": "C5-06", "zone": "C5", "row": 15, "col": 35}, {"code": "C5-07", "zone": "C5", "row": 13, "col": 36}, {"code": "C5-08", "zone": "C5", "row": 14, "col": 36}, {"code": "C5-09", "zone": "C5", "row": 15, "col": 36}, {"code": "C5-10", "zone": "C5", "row": 13, "col": 38}, {"code": "C5-11", "zone": "C5", "row": 14, "col": 38}, {"code": "C5-12", "zone": "C5", "row": 15, "col": 38}, {"code": "C6-01", "zone": "C6", "row": 13, "col": 39}, {"code": "C6-02", "zone": "C6", "row": 14, "col": 39}, {"code": "C6-03", "zone": "C6", "row": 15, "col": 39}, {"code": "C6-04", "zone": "C6", "row": 13, "col": 41}, {"code": "C6-05", "zone": "C6", "row": 14, "col": 41}, {"code": "C6-06", "zone": "C6", "row": 15, "col": 41}, {"code": "C6-07", "zone": "C6", "row": 13, "col": 42}, {"code": "C6-08", "zone": "C6", "row": 14, "col": 42}, {"code": "C6-09", "zone": "C6", "row": 15, "col": 42}, {"code": "C6-10", "zone": "C6", "row": 13, "col": 44}, {"code": "C6-11", "zone": "C6", "row": 14, "col": 44}, {"code": "C6-12", "zone": "C6", "row": 15, "col": 44}, {"code": "C7-01", "zone": "C7", "row": 13, "col": 45}, {"code": "C7-02", "zone": "C7", "row": 14, "col": 45}, {"code": "C7-03", "zone": "C7", "row": 15, "col": 45}, {"code": "C7-04", "zone": "C7", "row": 13, "col": 47}, {"code": "C7-05", "zone": "C7", "row": 14, "col": 47}, {"code": "C7-06", "zone": "C7", "row": 15, "col": 47}, {"code": "C7-07", "zone": "C7", "row": 13, "col": 48}, {"code": "C7-08", "zone": "C7", "row": 14, "col": 48}, {"code": "C7-09", "zone": "C7", "row": 15, "col": 48}, {"code": "C7-10", "zone": "C7", "row": 13, "col": 50}, {"code": "C7-11", "zone": "C7", "row": 14, "col": 50}, {"code": "C7-12", "zone": "C7", "row": 15, "col": 50}, {"code": "C8-01", "zone": "C8", "row": 13, "col": 51}, {"code": "C8-02", "zone": "C8", "row": 14, "col": 51}, {"code": "C8-03", "zone": "C8", "row": 15, "col": 51}, {"code": "C8-04", "zone": "C8", "row": 13, "col": 53}, {"code": "C8-05", "zone": "C8", "row": 14, "col": 53}, {"code": "C8-06", "zone": "C8", "row": 15, "col": 53}, {"code": "C8-07", "zone": "C8", "row": 13, "col": 54}, {"code": "C8-08", "zone": "C8", "row": 14, "col": 54}, {"code": "C8-09", "zone": "C8", "row": 15, "col": 54}, {"code": "D0-01", "zone": "D0", "row": 8, "col": 2}, {"code": "D0-02", "zone": "D0", "row": 9, "col": 2}, {"code": "D0-03", "zone": "D0", "row": 8, "col": 4}, {"code": "D0-04", "zone": "D0", "row": 9, "col": 4}, {"code": "D0-05", "zone": "D0", "row": 8, "col": 5}, {"code": "D0-06", "zone": "D0", "row": 9, "col": 5}, {"code": "D0-07", "zone": "D0", "row": 8, "col": 7}, {"code": "D0-08", "zone": "D0", "row": 9, "col": 7}, {"code": "D0-09", "zone": "D0", "row": 8, "col": 8}, {"code": "D0-10", "zone": "D0", "row": 9, "col": 8}, {"code": "D1-01", "zone": "D1", "row": 2, "col": 10}, {"code": "D1-02", "zone": "D1", "row": 3, "col": 10}, {"code": "D1-03", "zone": "D1", "row": 4, "col": 10}, {"code": "D1-04", "zone": "D1", "row": 5, "col": 10}, {"code": "D1-05", "zone": "D1", "row": 6, "col": 10}, {"code": "D1-06", "zone": "D1", "row": 7, "col": 10}, {"code": "D1-07", "zone": "D1", "row": 8, "col": 10}, {"code": "D1-08", "zone": "D1", "row": 9, "col": 10}, {"code": "D1-09", "zone": "D1", "row": 2, "col": 12}, {"code": "D1-10", "zone": "D1", "row": 3, "col": 12}, {"code": "D1-11", "zone": "D1", "row": 4, "col": 12}, {"code": "D1-12", "zone": "D1", "row": 5, "col": 12}, {"code": "D1-13", "zone": "D1", "row": 6, "col": 12}, {"code": "D1-14", "zone": "D1", "row": 7, "col": 12}, {"code": "D1-15", "zone": "D1", "row": 8, "col": 12}, {"code": "D1-16", "zone": "D1", "row": 9, "col": 12}, {"code": "D1-17", "zone": "D1", "row": 2, "col": 14}, {"code": "D1-18", "zone": "D1", "row": 3, "col": 14}, {"code": "D1-19", "zone": "D1", "row": 4, "col": 14}, {"code": "D1-20", "zone": "D1", "row": 5, "col": 14}, {"code": "D1-21", "zone": "D1", "row": 6, "col": 14}, {"code": "D1-22", "zone": "D1", "row": 7, "col": 14}, {"code": "D1-23", "zone": "D1", "row": 8, "col": 14}, {"code": "D1-24", "zone": "D1", "row": 9, "col": 14}, {"code": "D2-01", "zone": "D2", "row": 2, "col": 15}, {"code": "D2-02", "zone": "D2", "row": 3, "col": 15}, {"code": "D2-03", "zone": "D2", "row": 4, "col": 15}, {"code": "D2-04", "zone": "D2", "row": 5, "col": 15}, {"code": "D2-05", "zone": "D2", "row": 6, "col": 15}, {"code": "D2-06", "zone": "D2", "row": 7, "col": 15}, {"code": "D2-07", "zone": "D2", "row": 8, "col": 15}, {"code": "D2-08", "zone": "D2", "row": 9, "col": 15}, {"code": "D2-09", "zone": "D2", "row": 2, "col": 17}, {"code": "D2-10", "zone": "D2", "row": 3, "col": 17}, {"code": "D2-11", "zone": "D2", "row": 4, "col": 17}, {"code": "D2-12", "zone": "D2", "row": 5, "col": 17}, {"code": "D2-13", "zone": "D2", "row": 6, "col": 17}, {"code": "D2-14", "zone": "D2", "row": 7, "col": 17}, {"code": "D2-15", "zone": "D2", "row": 8, "col": 17}, {"code": "D2-16", "zone": "D2", "row": 9, "col": 17}, {"code": "D2-17", "zone": "D2", "row": 2, "col": 18}, {"code": "D2-18", "zone": "D2", "row": 3, "col": 18}, {"code": "D2-19", "zone": "D2", "row": 4, "col": 18}, {"code": "D2-20", "zone": "D2", "row": 5, "col": 18}, {"code": "D2-21", "zone": "D2", "row": 6, "col": 18}, {"code": "D2-22", "zone": "D2", "row": 7, "col": 18}, {"code": "D2-23", "zone": "D2", "row": 8, "col": 18}, {"code": "D2-24", "zone": "D2", "row": 9, "col": 18}, {"code": "D2-25", "zone": "D2", "row": 2, "col": 20}, {"code": "D2-26", "zone": "D2", "row": 3, "col": 20}, {"code": "D2-27", "zone": "D2", "row": 4, "col": 20}, {"code": "D2-28", "zone": "D2", "row": 5, "col": 20}, {"code": "D2-29", "zone": "D2", "row": 6, "col": 20}, {"code": "D2-30", "zone": "D2", "row": 7, "col": 20}, {"code": "D2-31", "zone": "D2", "row": 8, "col": 20}, {"code": "D2-32", "zone": "D2", "row": 9, "col": 20}, {"code": "D3-01", "zone": "D3", "row": 2, "col": 21}, {"code": "D3-02", "zone": "D3", "row": 3, "col": 21}, {"code": "D3-03", "zone": "D3", "row": 4, "col": 21}, {"code": "D3-04", "zone": "D3", "row": 5, "col": 21}, {"code": "D3-05", "zone": "D3", "row": 6, "col": 21}, {"code": "D3-06", "zone": "D3", "row": 7, "col": 21}, {"code": "D3-07", "zone": "D3", "row": 8, "col": 21}, {"code": "D3-08", "zone": "D3", "row": 9, "col": 21}, {"code": "D3-09", "zone": "D3", "row": 2, "col": 23}, {"code": "D3-10", "zone": "D3", "row": 3, "col": 23}, {"code": "D3-11", "zone": "D3", "row": 4, "col": 23}, {"code": "D3-12", "zone": "D3", "row": 5, "col": 23}, {"code": "D3-13", "zone": "D3", "row": 6, "col": 23}, {"code": "D3-14", "zone": "D3", "row": 7, "col": 23}, {"code": "D3-15", "zone": "D3", "row": 8, "col": 23}, {"code": "D3-16", "zone": "D3", "row": 9, "col": 23}, {"code": "D3-17", "zone": "D3", "row": 2, "col": 24}, {"code": "D3-18", "zone": "D3", "row": 3, "col": 24}, {"code": "D3-19", "zone": "D3", "row": 4, "col": 24}, {"code": "D3-20", "zone": "D3", "row": 5, "col": 24}, {"code": "D3-21", "zone": "D3", "row": 6, "col": 24}, {"code": "D3-22", "zone": "D3", "row": 7, "col": 24}, {"code": "D3-23", "zone": "D3", "row": 8, "col": 24}, {"code": "D3-24", "zone": "D3", "row": 9, "col": 24}, {"code": "D3-25", "zone": "D3", "row": 2, "col": 26}, {"code": "D3-26", "zone": "D3", "row": 3, "col": 26}, {"code": "D3-27", "zone": "D3", "row": 4, "col": 26}, {"code": "D3-28", "zone": "D3", "row": 5, "col": 26}, {"code": "D3-29", "zone": "D3", "row": 6, "col": 26}, {"code": "D3-30", "zone": "D3", "row": 7, "col": 26}, {"code": "D3-31", "zone": "D3", "row": 8, "col": 26}, {"code": "D3-32", "zone": "D3", "row": 9, "col": 26}, {"code": "D4-01", "zone": "D4", "row": 2, "col": 27}, {"code": "D4-02", "zone": "D4", "row": 3, "col": 27}, {"code": "D4-03", "zone": "D4", "row": 4, "col": 27}, {"code": "D4-04", "zone": "D4", "row": 5, "col": 27}, {"code": "D4-05", "zone": "D4", "row": 6, "col": 27}, {"code": "D4-06", "zone": "D4", "row": 7, "col": 27}, {"code": "D4-07", "zone": "D4", "row": 8, "col": 27}, {"code": "D4-08", "zone": "D4", "row": 9, "col": 27}, {"code": "D4-09", "zone": "D4", "row": 2, "col": 29}, {"code": "D4-10", "zone": "D4", "row": 3, "col": 29}, {"code": "D4-11", "zone": "D4", "row": 4, "col": 29}, {"code": "D4-12", "zone": "D4", "row": 5, "col": 29}, {"code": "D4-13", "zone": "D4", "row": 6, "col": 29}, {"code": "D4-14", "zone": "D4", "row": 7, "col": 29}, {"code": "D4-15", "zone": "D4", "row": 8, "col": 29}, {"code": "D4-16", "zone": "D4", "row": 9, "col": 29}, {"code": "D4-17", "zone": "D4", "row": 2, "col": 30}, {"code": "D4-18", "zone": "D4", "row": 3, "col": 30}, {"code": "D4-19", "zone": "D4", "row": 4, "col": 30}, {"code": "D4-20", "zone": "D4", "row": 5, "col": 30}, {"code": "D4-21", "zone": "D4", "row": 6, "col": 30}, {"code": "D4-22", "zone": "D4", "row": 7, "col": 30}, {"code": "D4-23", "zone": "D4", "row": 8, "col": 30}, {"code": "D4-24", "zone": "D4", "row": 9, "col": 30}, {"code": "D4-25", "zone": "D4", "row": 2, "col": 32}, {"code": "D4-26", "zone": "D4", "row": 3, "col": 32}, {"code": "D4-27", "zone": "D4", "row": 4, "col": 32}, {"code": "D4-28", "zone": "D4", "row": 5, "col": 32}, {"code": "D4-29", "zone": "D4", "row": 6, "col": 32}, {"code": "D4-30", "zone": "D4", "row": 7, "col": 32}, {"code": "D4-31", "zone": "D4", "row": 8, "col": 32}, {"code": "D4-32", "zone": "D4", "row": 9, "col": 32}, {"code": "D5-01", "zone": "D5", "row": 2, "col": 33}, {"code": "D5-02", "zone": "D5", "row": 3, "col": 33}, {"code": "D5-03", "zone": "D5", "row": 4, "col": 33}, {"code": "D5-04", "zone": "D5", "row": 5, "col": 33}, {"code": "D5-05", "zone": "D5", "row": 6, "col": 33}, {"code": "D5-06", "zone": "D5", "row": 7, "col": 33}, {"code": "D5-07", "zone": "D5", "row": 8, "col": 33}, {"code": "D5-08", "zone": "D5", "row": 9, "col": 33}, {"code": "D5-09", "zone": "D5", "row": 2, "col": 35}, {"code": "D5-10", "zone": "D5", "row": 3, "col": 35}, {"code": "D5-11", "zone": "D5", "row": 4, "col": 35}, {"code": "D5-12", "zone": "D5", "row": 5, "col": 35}, {"code": "D5-13", "zone": "D5", "row": 6, "col": 35}, {"code": "D5-14", "zone": "D5", "row": 7, "col": 35}, {"code": "D5-15", "zone": "D5", "row": 8, "col": 35}, {"code": "D5-16", "zone": "D5", "row": 9, "col": 35}, {"code": "D5-17", "zone": "D5", "row": 2, "col": 36}, {"code": "D5-18", "zone": "D5", "row": 3, "col": 36}, {"code": "D5-19", "zone": "D5", "row": 4, "col": 36}, {"code": "D5-20", "zone": "D5", "row": 5, "col": 36}, {"code": "D5-21", "zone": "D5", "row": 6, "col": 36}, {"code": "D5-22", "zone": "D5", "row": 7, "col": 36}, {"code": "D5-23", "zone": "D5", "row": 8, "col": 36}, {"code": "D5-24", "zone": "D5", "row": 9, "col": 36}, {"code": "D5-25", "zone": "D5", "row": 2, "col": 38}, {"code": "D5-26", "zone": "D5", "row": 3, "col": 38}, {"code": "D5-27", "zone": "D5", "row": 4, "col": 38}, {"code": "D5-28", "zone": "D5", "row": 5, "col": 38}, {"code": "D5-29", "zone": "D5", "row": 6, "col": 38}, {"code": "D5-30", "zone": "D5", "row": 7, "col": 38}, {"code": "D5-31", "zone": "D5", "row": 8, "col": 38}, {"code": "D5-32", "zone": "D5", "row": 9, "col": 38}, {"code": "D6-01", "zone": "D6", "row": 2, "col": 39}, {"code": "D6-02", "zone": "D6", "row": 3, "col": 39}, {"code": "D6-03", "zone": "D6", "row": 4, "col": 39}, {"code": "D6-04", "zone": "D6", "row": 5, "col": 39}, {"code": "D6-05", "zone": "D6", "row": 6, "col": 39}, {"code": "D6-06", "zone": "D6", "row": 7, "col": 39}, {"code": "D6-07", "zone": "D6", "row": 8, "col": 39}, {"code": "D6-08", "zone": "D6", "row": 9, "col": 39}, {"code": "D6-09", "zone": "D6", "row": 2, "col": 41}, {"code": "D6-10", "zone": "D6", "row": 3, "col": 41}, {"code": "D6-11", "zone": "D6", "row": 4, "col": 41}, {"code": "D6-12", "zone": "D6", "row": 5, "col": 41}, {"code": "D6-13", "zone": "D6", "row": 6, "col": 41}, {"code": "D6-14", "zone": "D6", "row": 7, "col": 41}, {"code": "D6-15", "zone": "D6", "row": 8, "col": 41}, {"code": "D6-16", "zone": "D6", "row": 9, "col": 41}, {"code": "D6-17", "zone": "D6", "row": 2, "col": 42}, {"code": "D6-18", "zone": "D6", "row": 3, "col": 42}, {"code": "D6-19", "zone": "D6", "row": 4, "col": 42}, {"code": "D6-20", "zone": "D6", "row": 5, "col": 42}, {"code": "D6-21", "zone": "D6", "row": 6, "col": 42}, {"code": "D6-22", "zone": "D6", "row": 7, "col": 42}, {"code": "D6-23", "zone": "D6", "row": 8, "col": 42}, {"code": "D6-24", "zone": "D6", "row": 9, "col": 42}, {"code": "D6-25", "zone": "D6", "row": 2, "col": 44}, {"code": "D6-26", "zone": "D6", "row": 3, "col": 44}, {"code": "D6-27", "zone": "D6", "row": 4, "col": 44}, {"code": "D6-28", "zone": "D6", "row": 5, "col": 44}, {"code": "D6-29", "zone": "D6", "row": 6, "col": 44}, {"code": "D6-30", "zone": "D6", "row": 7, "col": 44}, {"code": "D6-31", "zone": "D6", "row": 8, "col": 44}, {"code": "D6-32", "zone": "D6", "row": 9, "col": 44}, {"code": "D7-01", "zone": "D7", "row": 2, "col": 45}, {"code": "D7-02", "zone": "D7", "row": 3, "col": 45}, {"code": "D7-03", "zone": "D7", "row": 4, "col": 45}, {"code": "D7-04", "zone": "D7", "row": 5, "col": 45}, {"code": "D7-05", "zone": "D7", "row": 6, "col": 45}, {"code": "D7-06", "zone": "D7", "row": 7, "col": 45}, {"code": "D7-07", "zone": "D7", "row": 8, "col": 45}, {"code": "D7-08", "zone": "D7", "row": 9, "col": 45}, {"code": "D7-09", "zone": "D7", "row": 2, "col": 47}, {"code": "D7-10", "zone": "D7", "row": 3, "col": 47}, {"code": "D7-11", "zone": "D7", "row": 4, "col": 47}, {"code": "D7-12", "zone": "D7", "row": 5, "col": 47}, {"code": "D7-13", "zone": "D7", "row": 6, "col": 47}, {"code": "D7-14", "zone": "D7", "row": 7, "col": 47}, {"code": "D7-15", "zone": "D7", "row": 8, "col": 47}, {"code": "D7-16", "zone": "D7", "row": 9, "col": 47}, {"code": "D7-17", "zone": "D7", "row": 2, "col": 48}, {"code": "D7-18", "zone": "D7", "row": 3, "col": 48}, {"code": "D7-19", "zone": "D7", "row": 4, "col": 48}, {"code": "D7-20", "zone": "D7", "row": 5, "col": 48}, {"code": "D7-21", "zone": "D7", "row": 6, "col": 48}, {"code": "D7-22", "zone": "D7", "row": 7, "col": 48}, {"code": "D7-23", "zone": "D7", "row": 8, "col": 48}, {"code": "D7-24", "zone": "D7", "row": 9, "col": 48}, {"code": "D7-25", "zone": "D7", "row": 2, "col": 50}, {"code": "D7-26", "zone": "D7", "row": 3, "col": 50}, {"code": "D7-27", "zone": "D7", "row": 4, "col": 50}, {"code": "D7-28", "zone": "D7", "row": 5, "col": 50}, {"code": "D7-29", "zone": "D7", "row": 6, "col": 50}, {"code": "D7-30", "zone": "D7", "row": 7, "col": 50}, {"code": "D7-31", "zone": "D7", "row": 8, "col": 50}, {"code": "D7-32", "zone": "D7", "row": 9, "col": 50}, {"code": "D8-01", "zone": "D8", "row": 9, "col": 51}, {"code": "D8-02", "zone": "D8", "row": 9, "col": 53}, {"code": "D8-03", "zone": "D8", "row": 9, "col": 54}], "blocks": [{"label": "D", "row": 1, "col": 1, "rowspan": 9, "colspan": 1, "color": null}, {"label": "D0", "row": 1, "col": 2, "rowspan": 1, "colspan": 8, "color": null}, {"label": "D1", "row": 1, "col": 10, "rowspan": 1, "colspan": 5, "color": null}, {"label": "D2", "row": 1, "col": 15, "rowspan": 1, "colspan": 6, "color": null}, {"label": "D3", "row": 1, "col": 21, "rowspan": 1, "colspan": 6, "color": null}, {"label": "D4", "row": 1, "col": 27, "rowspan": 1, "colspan": 6, "color": null}, {"label": "D5", "row": 1, "col": 33, "rowspan": 1, "colspan": 6, "color": null}, {"label": "D6", "row": 1, "col": 39, "rowspan": 1, "colspan": 6, "color": null}, {"label": "D7", "row": 1, "col": 45, "rowspan": 1, "colspan": 6, "color": null}, {"label": "", "row": 2, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 2, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 3, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 4, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 5, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 6, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 7, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 3, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 6, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 9, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 8, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "D8", "row": 8, "col": 51, "rowspan": 1, "colspan": 4, "color": null}, {"label": "", "row": 9, "col": 3, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 6, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 9, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 9, "col": 52, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "INBOUND GATE", "row": 10, "col": 1, "rowspan": 4, "colspan": 1, "color": "#FFFF00"}, {"label": "PASS WAY", "row": 10, "col": 2, "rowspan": 2, "colspan": 53, "color": "#FFFF00"}, {"label": "", "row": 10, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 10, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 11, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 11, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "C0", "row": 12, "col": 2, "rowspan": 1, "colspan": 8, "color": null}, {"label": "C1", "row": 12, "col": 10, "rowspan": 1, "colspan": 5, "color": null}, {"label": "C2", "row": 12, "col": 15, "rowspan": 1, "colspan": 6, "color": null}, {"label": "C3", "row": 12, "col": 21, "rowspan": 1, "colspan": 6, "color": null}, {"label": "C4", "row": 12, "col": 27, "rowspan": 1, "colspan": 6, "color": null}, {"label": "C5", "row": 12, "col": 33, "rowspan": 1, "colspan": 6, "color": null}, {"label": "C6", "row": 12, "col": 39, "rowspan": 1, "colspan": 6, "color": null}, {"label": "C7", "row": 12, "col": 45, "rowspan": 1, "colspan": 6, "color": null}, {"label": "C8", "row": 12, "col": 51, "rowspan": 1, "colspan": 4, "color": null}, {"label": "", "row": 12, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 12, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 13, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 52, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 13, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 13, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "C", "row": 14, "col": 1, "rowspan": 2, "colspan": 1, "color": null}, {"label": "", "row": 14, "col": 3, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 6, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 9, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 52, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 14, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 14, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 15, "col": 3, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 6, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 9, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 11, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 13, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 16, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 19, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 22, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 25, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 28, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 31, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 34, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 37, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 40, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 43, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 46, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 49, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 52, "rowspan": 1, "colspan": 1, "color": "#4F81BD"}, {"label": "", "row": 15, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 15, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "B0", "row": 16, "col": 2, "rowspan": 1, "colspan": 13, "color": null}, {"label": "B1", "row": 16, "col": 15, "rowspan": 1, "colspan": 6, "color": null}, {"label": "B2", "row": 16, "col": 21, "rowspan": 1, "colspan": 6, "color": null}, {"label": "B3", "row": 16, "col": 27, "rowspan": 1, "colspan": 6, "color": null}, {"label": "B4", "row": 16, "col": 33, "rowspan": 1, "colspan": 6, "color": null}, {"label": "B5", "row": 16, "col": 39, "rowspan": 1, "colspan": 6, "color": null}, {"label": "B6", "row": 16, "col": 45, "rowspan": 1, "colspan": 6, "color": null}, {"label": "B7", "row": 16, "col": 51, "rowspan": 1, "colspan": 4, "color": null}, {"label": "", "row": 16, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 16, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "B", "row": 17, "col": 1, "rowspan": 2, "colspan": 1, "color": null}, {"label": "Well done packing for scan", "row": 17, "col": 2, "rowspan": 2, "colspan": 13, "color": "#7030A0"}, {"label": "", "row": 17, "col": 16, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 19, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 22, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 25, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 52, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 17, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 17, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 18, "col": 16, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 19, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 22, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 25, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 52, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 18, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 18, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 19, "col": 1, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "Well done packing for scan", "row": 19, "col": 8, "rowspan": 2, "colspan": 7, "color": "#7030A0"}, {"label": "", "row": 19, "col": 16, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 19, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 22, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 25, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 52, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 19, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 19, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "Outbound Gate", "row": 20, "col": 1, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 16, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 19, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 22, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 25, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 20, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 20, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 21, "col": 1, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 16, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 19, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 22, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 25, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 21, "col": 55, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "", "row": 21, "col": 56, "rowspan": 1, "colspan": 1, "color": "#FFFF00"}, {"label": "Cancel order\ntermpory", "row": 22, "col": 2, "rowspan": 2, "colspan": 6, "color": "#C0504D"}, {"label": "PASS WAY", "row": 22, "col": 8, "rowspan": 2, "colspan": 49, "color": "#FFC000"}, {"label": "A", "row": 24, "col": 1, "rowspan": 6, "colspan": 1, "color": null}, {"label": "OFFICE", "row": 24, "col": 2, "rowspan": 6, "colspan": 6, "color": "#00B0F0"}, {"label": "TV welldone area", "row": 24, "col": 21, "rowspan": 6, "colspan": 6, "color": "#7030A0"}, {"label": "", "row": 24, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 24, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 24, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 24, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 24, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 24, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 24, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 24, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "MATERIAL", "row": 24, "col": 51, "rowspan": 6, "colspan": 6, "color": null}, {"label": "Packing\narea", "row": 25, "col": 8, "rowspan": 5, "colspan": 7, "color": "#0070C0"}, {"label": "TV packing", "row": 25, "col": 15, "rowspan": 5, "colspan": 6, "color": null}, {"label": "", "row": 25, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 25, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 25, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 25, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 25, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 25, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 25, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 25, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 26, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 26, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 26, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 26, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 26, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 26, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 26, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 26, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 27, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 27, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 27, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 27, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 27, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 27, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 27, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 27, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 28, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 28, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 28, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 28, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 28, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 28, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 28, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 28, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 29, "col": 28, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 29, "col": 31, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 29, "col": 34, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 29, "col": 37, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 29, "col": 40, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 29, "col": 43, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 29, "col": 46, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "", "row": 29, "col": 49, "rowspan": 1, "colspan": 1, "color": "#FFC000"}, {"label": "A1", "row": 30, "col": 8, "rowspan": 1, "colspan": 7, "color": null}, {"label": "A2", "row": 30, "col": 15, "rowspan": 1, "colspan": 6, "color": null}, {"label": "A3", "row": 30, "col": 21, "rowspan": 1, "colspan": 6, "color": null}, {"label": "A4", "row": 30, "col": 27, "rowspan": 1, "colspan": 6, "color": null}, {"label": "A5", "row": 30, "col": 33, "rowspan": 1, "colspan": 6, "color": null}, {"label": "A6", "row": 30, "col": 39, "rowspan": 1, "colspan": 6, "color": null}, {"label": "A7", "row": 30, "col": 45, "rowspan": 1, "colspan": 6, "color": null}, {"label": "A8", "row": 30, "col": 51, "rowspan": 1, "colspan": 6, "color": null}], "zones": ["A4", "A5", "A6", "A7", "B1", "B2", "B3", "B4", "B5", "B6", "B7", "C0", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8"], "maxCol": 56, "maxRow": 30}
+</script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDaQFJwh4AmdTrZEEj_jOYXe3soPTV74gU",
+  authDomain: "warehouse-location-system.firebaseapp.com",
+  projectId: "warehouse-location-system",
+  storageBucket: "warehouse-location-system.firebasestorage.app",
+  messagingSenderId: "294139303400",
+  appId: "1:294139303400:web:cbd8b5368e475563a8805d"
+};
+const fbApp = initializeApp(firebaseConfig);
+const db = getFirestore(fbApp);
+
+(function(){
+  const WDATA = JSON.parse(document.getElementById('wdata-json').textContent);
+  const LOCATIONS = WDATA.locations;   // [{code,zone,row,col}]
+  const BLOCKS = WDATA.blocks;         // [{label,row,col,rowspan,colspan,color}]
+  const ZONES = WDATA.zones;
+  const MAX_COL = WDATA.maxCol;
+  const MAX_ROW = WDATA.maxRow;
+
+  const grid = document.getElementById('grid');
+  grid.style.gridTemplateColumns = `repeat(${MAX_COL}, 15px)`;
+  grid.style.gridTemplateRows = `repeat(${MAX_ROW}, 20px)`;
+
+  const FUNC_LABELS = new Set(['INBOUND GATE','PASS WAY','Well done packing for scan','Outbound Gate',
+    'Cancel order\ntermpory','OFFICE','Packing\narea','TV packing','TV welldone area','MATERIAL']);
+
+  let status = {};   // code -> 'occupied' | 'reserved' (absence = free)
+  let log = [];      // [{id,time,order,goods,qty,zone,codes,type,operator}]
+  let accounts = {};  // username -> passwordHash
+  let currentUser = null;
+
+  const locByCode = {};
+  LOCATIONS.forEach(l => locByCode[l.code] = l);
+
+  // ---------- Firebase / Firestore ----------
+  const statusDocRef = doc(db, 'wms', 'status');
+  const logDocRef = doc(db, 'wms', 'log');
+  const accountsDocRef = doc(db, 'wms', 'accounts');
+
+  async function loadAccounts(){
+    try{
+      const snap = await getDoc(accountsDocRef);
+      accounts = snap.exists() ? (snap.data().emails || {}) : {};
+    }catch(e){ console.error('loadAccounts failed', e); accounts = {}; }
+  }
+  async function saveAccounts(){
+    try{ await setDoc(accountsDocRef, { emails: accounts }); }
+    catch(e){ console.error('saveAccounts failed', e); }
+  }
+  async function loadState(){
+    try{
+      const snap = await getDoc(statusDocRef);
+      status = snap.exists() ? (snap.data().data || {}) : {};
+    }catch(e){ console.error('loadState(status) failed', e); status = {}; }
+    try{
+      const snap2 = await getDoc(logDocRef);
+      log = snap2.exists() ? (snap2.data().entries || []) : [];
+    }catch(e){ console.error('loadState(log) failed', e); log = []; }
+  }
+  async function saveStatus(){
+    try{ await setDoc(statusDocRef, { data: status }); }
+    catch(e){ console.error('saveStatus failed', e); showConnErr(); }
+  }
+  async function saveLog(){
+    try{ await setDoc(logDocRef, { entries: log }); }
+    catch(e){ console.error('saveLog failed', e); showConnErr(); }
+  }
+  function showConnErr(){
+    const t = document.getElementById('toast');
+    if(!t) return;
+    t.textContent = '⚠ 无法连接数据库，改动可能未保存，请检查网络后重试';
+    t.className = 'toast err';
+  }
+  // “记住我的邮箱” — 纯本机浏览器偏好，不需要跨设备同步，用 localStorage 即可
+  function rememberLastUser(name){
+    try{ localStorage.setItem('wms-last-user', name); }catch(e){}
+  }
+  function getLastUser(){
+    try{ return localStorage.getItem('wms-last-user') || ''; }catch(e){ return ''; }
+  }
+
+  // 实时同步：其他人做的改动会自动推送过来并刷新界面
+  let suppressNextStatusPush = false;
+  let suppressNextLogPush = false;
+  onSnapshot(statusDocRef, (snap) => {
+    if(!snap.exists() || !currentUser) return;
+    status = snap.data().data || {};
+    refreshAllVisuals();
+  });
+  onSnapshot(logDocRef, (snap) => {
+    if(!snap.exists() || !currentUser) return;
+    log = snap.data().entries || [];
+    renderLog();
+  });
+
+  // ---------- render map ----------
+  function buildStaticBlocks(){
+    BLOCKS.forEach(b => {
+      const div = document.createElement('div');
+      const label = (b.label||'').trim();
+      let cls = 'cell';
+      if(b.color === '#4F81BD'){
+        cls += ' aisle-strip';
+      } else if(b.color){
+        cls += ' func';
+        div.style.background = b.color;
+      } else if(label && b.colspan === 1 && b.rowspan >= 5){
+        cls += ' bigletter';
+      } else if(label){
+        cls += ' label';
+      }
+      div.className = cls;
+      div.style.gridColumn = `${b.col} / span ${b.colspan}`;
+      div.style.gridRow = `${b.row} / span ${b.rowspan}`;
+      if(label) div.textContent = label;
+      grid.appendChild(div);
+    });
+  }
+
+  function locCellId(code){ return 'loc-' + code.replace(/[^A-Za-z0-9_-]/g,''); }
+
+  function buildLocationCells(){
+    LOCATIONS.forEach(l => {
+      const div = document.createElement('div');
+      div.className = 'cell loc';
+      div.id = locCellId(l.code);
+      div.style.gridColumn = `${l.col} / span 1`;
+      div.style.gridRow = `${l.row} / span 1`;
+      div.textContent = l.code;
+      div.title = l.code;
+      div.addEventListener('click', (ev) => openPopover(l.code, ev));
+      grid.appendChild(div);
+    });
+  }
+
+  function refreshLocationVisual(code){
+    const el = document.getElementById(locCellId(code));
+    if(!el) return;
+    const val = status[code];
+    el.classList.remove('free','occupied','reserved');
+    if(val === 'occupied') el.classList.add('occupied');
+    else if(val === 'reserved') el.classList.add('reserved');
+    else el.classList.add('free');
+  }
+  function refreshAllVisuals(){
+    LOCATIONS.forEach(l => refreshLocationVisual(l.code));
+    updateStats();
+    updateZoneBars();
+  }
+
+  // ---------- popover ----------
+  const pop = document.getElementById('popover');
+  const popCode = document.getElementById('popCode');
+  const popZone = document.getElementById('popZone');
+  const popStatus = document.getElementById('popStatus');
+  const popActions = document.getElementById('popActions');
+  let popCurrentCode = null;
+
+  const STATUS_LABEL = { occupied:'占用', reserved:'预占用', free:'空闲' };
+
+  function makeActionBtn(text, bg, color, onClick){
+    const b = document.createElement('button');
+    b.textContent = text;
+    b.style.background = bg;
+    b.style.color = color;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function openPopover(code, ev){
+    popCurrentCode = code;
+    const st = status[code] || 'free';
+    popCode.textContent = code;
+    popZone.textContent = locByCode[code].zone;
+    popStatus.textContent = STATUS_LABEL[st];
+    popActions.innerHTML = '';
+
+    if(st === 'free'){
+      popActions.appendChild(makeActionBtn('标记为占用', 'var(--occ)', '#fff', () => setStatus(code, 'occupied')));
+      popActions.appendChild(makeActionBtn('标记为预占用', 'var(--reserve)', '#241a05', () => setStatus(code, 'reserved')));
+    } else if(st === 'reserved'){
+      popActions.appendChild(makeActionBtn('转为正式占用', 'var(--occ)', '#fff', () => setStatus(code, 'occupied')));
+      popActions.appendChild(makeActionBtn('释放为空闲', 'var(--free)', '#062', () => setStatus(code, 'free')));
+    } else {
+      popActions.appendChild(makeActionBtn('释放为空闲', 'var(--free)', '#062', () => setStatus(code, 'free')));
+    }
+
+    const rect = ev.target.getBoundingClientRect();
+    let left = rect.left + 20;
+    let top = rect.top;
+    if(left > window.innerWidth - 200) left = window.innerWidth - 210;
+    if(top > window.innerHeight - 150) top = window.innerHeight - 160;
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+    pop.style.display = 'block';
+  }
+  document.addEventListener('click', (ev) => {
+    if(!pop.contains(ev.target) && !ev.target.classList.contains('loc')){
+      pop.style.display = 'none';
+    }
+  });
+  async function setStatus(code, newStatus){
+    const fromLabel = STATUS_LABEL[status[code] || 'free'];
+    const toLabel = STATUS_LABEL[newStatus];
+    if(newStatus === 'free') delete status[code];
+    else status[code] = newStatus;
+    await saveStatus();
+    log.push({
+      id: Date.now(), time: new Date().toLocaleString('zh-CN'),
+      order: '—', goods: `手动修改：${fromLabel} → ${toLabel}`, qty: 1,
+      zone: locByCode[code].zone, codes: [code], type: '手动修改', operator: currentUser
+    });
+    await saveLog();
+    refreshLocationVisual(code);
+    updateStats();
+    updateZoneBars();
+    renderLog();
+    pop.style.display = 'none';
+  }
+
+  // ---------- stats ----------
+  function updateStats(){
+    const total = LOCATIONS.length;
+    const occ = Object.keys(status).filter(c => status[c] === 'occupied').length;
+    const reserved = Object.keys(status).filter(c => status[c] === 'reserved').length;
+    const free = total - occ - reserved;
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statFree').textContent = free;
+    document.getElementById('statReserve').textContent = reserved;
+    document.getElementById('statOcc').textContent = occ;
+    document.getElementById('statRate').textContent = total ? Math.round((occ+reserved)/total*100) + '%' : '0%';
+  }
+
+  function updateZoneBars(){
+    const wrap = document.getElementById('zoneBars');
+    wrap.innerHTML = '';
+    ZONES.forEach(z => {
+      const cells = LOCATIONS.filter(l => l.zone === z);
+      const occ = cells.filter(l => status[l.code]).length;
+      const pct = cells.length ? Math.round(occ/cells.length*100) : 0;
+      const row = document.createElement('div');
+      row.className = 'zbar-row';
+      row.innerHTML = `<span class="zname">${z}</span>
+        <span class="zbar-track"><span class="zbar-fill" style="width:${pct}%"></span></span>
+        <span class="zcount">${occ}/${cells.length}</span>`;
+      wrap.appendChild(row);
+    });
+  }
+
+  // ---------- auth (邮箱免密码登录) ----------
+  const authOverlay = document.getElementById('authOverlay');
+  const authErr = document.getElementById('authErr');
+  const authSubmit = document.getElementById('authSubmit');
+
+  function isValidEmail(v){
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  }
+
+  async function doLogin(email){
+    if(!accounts[email]){
+      accounts[email] = { firstSeen: new Date().toLocaleString('zh-CN') };
+      await saveAccounts();
+    }
+    return true;
+  }
+
+  authSubmit.addEventListener('click', async () => {
+    const email = document.getElementById('authEmail').value.trim().toLowerCase();
+    authErr.textContent = '';
+    if(!isValidEmail(email)){
+      authErr.textContent = '请输入有效的邮箱地址';
+      return;
+    }
+    await doLogin(email);
+    currentUser = email;
+    await rememberLastUser(email);
+    enterApp();
+  });
+  document.getElementById('authEmail').addEventListener('keydown', (e) => {
+    if(e.key === 'Enter') authSubmit.click();
+  });
+
+  function enterApp(){
+    authOverlay.style.display = 'none';
+    document.getElementById('mainLayout').style.display = '';
+    document.getElementById('userTag').style.display = 'flex';
+    document.getElementById('curUserName').textContent = currentUser;
+  }
+
+  document.getElementById('btnLogout').addEventListener('click', () => {
+    currentUser = null;
+    document.getElementById('mainLayout').style.display = 'none';
+    document.getElementById('userTag').style.display = 'none';
+    authOverlay.style.display = 'flex';
+    document.getElementById('authEmail').value = '';
+    authErr.textContent = '';
+  });
+  function buildZoneOptions(){
+    const sels = [document.getElementById('fZone'), document.getElementById('rZone')];
+    sels.forEach(sel => {
+      ZONES.forEach(z => {
+        const opt = document.createElement('option');
+        opt.value = z; opt.textContent = z;
+        sel.appendChild(opt);
+      });
+    });
+  }
+
+  // ---------- allocation ----------
+  // 入库数量 = 需要占用的库位数量：按顺序找出 qty 个空闲库位（数量不足则不分配，返回可用空闲数供提示）
+  function findFreeSlots(zoneFilter, qty){
+    const pool = zoneFilter ? LOCATIONS.filter(l => l.zone === zoneFilter) : LOCATIONS;
+    const free = pool.filter(l => !status[l.code]);
+    if(free.length < qty){
+      return { ok:false, available: free.length };
+    }
+    return { ok:true, codes: free.slice(0, qty).map(l => l.code) };
+  }
+
+  function showToast(msg, ok){
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + (ok ? 'ok' : 'err');
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.className = 'toast'; }, 3500);
+  }
+
+  function nextOrderNo(prefix){
+    const d = new Date();
+    const ymd = d.getFullYear().toString() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+    const sameDay = log.filter(r => r.order && r.order.startsWith(prefix + ymd)).length;
+    return prefix + ymd + String(sameDay + 1).padStart(3,'0');
+  }
+
+  function flashCell(code, scroll){
+    const el = document.getElementById(locCellId(code));
+    if(!el) return;
+    if(scroll) el.scrollIntoView({behavior:'smooth', block:'center', inline:'center'});
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+  }
+  function flashCells(codes){
+    codes.forEach((code, i) => flashCell(code, i === 0));
+  }
+
+  // ---------- log rendering ----------
+  function renderLog(){
+    const wrap = document.getElementById('logWrap');
+    if(log.length === 0){
+      wrap.innerHTML = '<div class="log-empty">暂无入库记录</div>';
+      return;
+    }
+    let html = '<table><thead><tr><th>单号</th><th>类型</th><th>货物/备注</th><th>数量</th><th>库位</th><th>操作人</th><th></th></tr></thead><tbody>';
+    for(let i = log.length - 1; i >= 0; i--){
+      const r = log[i];
+      const codes = r.codes || (r.code ? [r.code] : []);
+      const codesHtml = codes.map(c => `<div>${c}</div>`).join('');
+      const isReserve = r.type === '预占用';
+      const isManual = r.type === '手动修改';
+      const typeColor = isReserve ? 'var(--reserve)' : (isManual ? 'var(--accent)' : 'var(--free)');
+      const typeHtml = `<span style="color:${typeColor}; font-weight:700;">${r.type || '入库'}</span>`;
+      html += `<tr>
+        <td>${escapeHtml(r.order)}</td>
+        <td>${typeHtml}</td>
+        <td>${escapeHtml(r.goods)}</td>
+        <td>${r.qty}</td>
+        <td class="code">${codesHtml}</td>
+        <td>${escapeHtml(r.operator || '-')}</td>
+        <td><span class="undo" data-idx="${i}">撤销</span></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+    wrap.querySelectorAll('.undo').forEach(el => {
+      el.addEventListener('click', async () => {
+        const idx = parseInt(el.dataset.idx, 10);
+        const rec = log[idx];
+        if(rec){
+          const codes = rec.codes || (rec.code ? [rec.code] : []);
+          codes.forEach(c => delete status[c]);
+          log.splice(idx, 1);
+          await saveStatus();
+          await saveLog();
+          codes.forEach(c => refreshLocationVisual(c));
+          updateStats();
+          updateZoneBars();
+          renderLog();
+          showToast(`已撤销 ${rec.order}，${codes.length} 个库位恢复空闲`, true);
+        }
+      });
+    });
+  }
+
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ---------- form submit ----------
+  document.getElementById('btnAllocate').addEventListener('click', async () => {
+    const goods = document.getElementById('fGoods').value.trim();
+    const qty = parseInt(document.getElementById('fQty').value, 10) || 1;
+    const zone = document.getElementById('fZone').value;
+    let order = document.getElementById('fOrder').value.trim();
+    if(!order) order = nextOrderNo('RK');
+    if(!goods){
+      showToast('请填写货物名称 / SKU', false);
+      return;
+    }
+    const result = findFreeSlots(zone || null, qty);
+    if(!result.ok){
+      const scope = zone ? `${zone} 区域` : '全库';
+      showToast(`${scope}空闲库位不足：需要 ${qty} 个，仅剩 ${result.available} 个`, false);
+      return;
+    }
+    const codes = result.codes;
+    codes.forEach(c => { status[c] = 'occupied'; });
+    log.push({id: Date.now(), time: new Date().toLocaleString('zh-CN'), order, goods, qty, zone: zone || '不限', codes, type:'入库', operator: currentUser});
+    await saveStatus();
+    await saveLog();
+    codes.forEach(c => refreshLocationVisual(c));
+    updateStats();
+    updateZoneBars();
+    renderLog();
+    flashCells(codes);
+    showToast(`已分配 ${qty} 个库位：${codes.join('、')}`, true);
+    document.getElementById('fOrder').value = '';
+    document.getElementById('fGoods').value = '';
+    document.getElementById('fQty').value = 1;
+  });
+
+  // ---------- reserve (预占用) submit ----------
+  document.getElementById('btnReserve').addEventListener('click', async () => {
+    const note = document.getElementById('rNote').value.trim() || '预占用';
+    const qty = parseInt(document.getElementById('rQty').value, 10) || 1;
+    const zone = document.getElementById('rZone').value;
+    const order = nextOrderNo('YZ');
+    const result = findFreeSlots(zone || null, qty);
+    const toastEl = document.getElementById('reserveToast');
+    function showReserveToast(msg, ok){
+      toastEl.textContent = msg;
+      toastEl.className = 'toast ' + (ok ? 'ok' : 'err');
+      clearTimeout(toastEl._timer);
+      toastEl._timer = setTimeout(() => { toastEl.className = 'toast'; }, 3500);
+    }
+    if(!result.ok){
+      const scope = zone ? `${zone} 区域` : '全库';
+      showReserveToast(`${scope}空闲库位不足：需要 ${qty} 个，仅剩 ${result.available} 个`, false);
+      return;
+    }
+    const codes = result.codes;
+    codes.forEach(c => { status[c] = 'reserved'; });
+    log.push({id: Date.now(), time: new Date().toLocaleString('zh-CN'), order, goods: note, qty, zone: zone || '不限', codes, type:'预占用', operator: currentUser});
+    await saveStatus();
+    await saveLog();
+    codes.forEach(c => refreshLocationVisual(c));
+    updateStats();
+    updateZoneBars();
+    renderLog();
+    flashCells(codes);
+    showReserveToast(`已预占 ${qty} 个库位：${codes.join('、')}`, true);
+    document.getElementById('rNote').value = '';
+    document.getElementById('rQty').value = 1;
+  });
+
+  document.getElementById('btnReset').addEventListener('click', async () => {
+    if(!confirm('确定要清空所有库位占用/预占用状态和全部记录吗？此操作不可撤销。')) return;
+    status = {};
+    log = [];
+    await saveStatus();
+    await saveLog();
+    refreshAllVisuals();
+    renderLog();
+    showToast('已重置全部库位状态', true);
+  });
+
+  // ---------- init ----------
+  async function init(){
+    buildStaticBlocks();
+    buildLocationCells();
+    buildZoneOptions();
+    await loadAccounts();
+    await loadState();
+    refreshAllVisuals();
+    renderLog();
+    document.getElementById('fOrder').placeholder = nextOrderNo('RK');
+    const last = await getLastUser();
+    if(last) document.getElementById('authEmail').value = last;
+  }
+  init();
+})();
+
+</script>
+</body>
+</html>
